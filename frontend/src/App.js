@@ -1,4 +1,3 @@
-// App.js - Updated React component with tab selection for Ringba and CallGrid
 import React, { useState } from "react";
 import {
   Container,
@@ -221,18 +220,7 @@ const App = () => {
                     className="py-2"
                   />
                   <Form.Text className="text-muted">
-                    {activeSystem === "ringba" ? (
-                      "Required columns: inboundphonenumber, targetname, revenue, payout"
-                    ) : (
-                      <>
-                        Required columns: inboundphonenumber, targetname,
-                        revenue, payout
-                        <br />
-                        Optional column: <strong>converted</strong> (Yes/No or
-                        true/false) &mdash; updates the call's converted
-                        status in CallGrid
-                      </>
-                    )}
+                    Required columns: inboundphonenumber, targetname, revenue, payout
                   </Form.Text>
                 </Form.Group>
 
