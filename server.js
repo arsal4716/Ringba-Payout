@@ -719,11 +719,16 @@ async function processFile(system, filePath, reportStart, reportEnd, processType
     }
   }
 
+  const convertedYes = processedRecords.filter((r) => r.converted === true).length;
+  const convertedNo = processedRecords.filter((r) => r.converted === false).length;
+
   return {
     total: totalRecords,
     processed: processedRecords.length,
     failed: failedRecords.length,
     skippedNoPayout: noPayoutRecords.length,
+    convertedYes,
+    convertedNo,
     invalidRows,
     noRecordFoundNumbers,
     noPayoutRecords,
@@ -767,6 +772,8 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         processed: summary.processed,
         failed: summary.failed,
         skippedNoPayout: summary.skippedNoPayout,
+        convertedYes: summary.convertedYes,
+        convertedNo: summary.convertedNo,
         batches: Math.ceil(summary.total / (system === "callgrid" ? 20 : 10))
       },
       invalidRows: summary.invalidRows,
