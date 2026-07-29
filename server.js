@@ -1,4 +1,5 @@
 // server.js - Full updated server with both Ringba and CallGrid support
+require("dotenv").config();
 const express = require("express");
 const multer = require("multer");
 const XLSX = require("xlsx");
@@ -13,12 +14,27 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 // ==================== CONFIGURATION ====================
-const RINGBA_AUTH_TOKEN = "09f0c9f0ce65fca7fd49064ab10d2bac546768a83565a230c05b281ee1fc09c03c4e30e1ac0cf291867863037c64db4d56eb3789999525c64e619e34ba9f57ffac493ecf47c697ea306751b20db941f29eb6f04f71cad7433e58edd98fb7a520900154a7b7dd126c32447dffd5bace47750c37f";
-const CALLGRID_AUTH_TOKEN = "8572ffb21cf4b8804bbad7356e8eb0cb98a835d446984f59";
-const RINGBA_API_BASE = "https://api.ringba.com/v2/RAec22abec294c46ddba910daf69d8489c";
+const RINGBA_AUTH_TOKEN = process.env.RINGBA_AUTH_TOKEN;
+const CALLGRID_AUTH_TOKEN = process.env.CALLGRID_AUTH_TOKEN;
+const RINGBA_API_BASE = process.env.RINGBA_API_BASE;
 
-const CALLGRID_ORG_ID = "cmovn1ljg00oy07h3reijtrfg";
-const CALLGRID_API_BASE = "https://api.callgrid.com/api";
+const CALLGRID_ORG_ID = process.env.CALLGRID_ORG_ID;
+const CALLGRID_API_BASE = process.env.CALLGRID_API_BASE;
+
+const REQUIRED_ENV_VARS = [
+  "RINGBA_AUTH_TOKEN",
+  "RINGBA_API_BASE",
+  "CALLGRID_AUTH_TOKEN",
+  "CALLGRID_ORG_ID",
+  "CALLGRID_API_BASE",
+];
+const missingEnvVars = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
+if (missingEnvVars.length) {
+  console.error(
+    `[Config Error] Missing required environment variables: ${missingEnvVars.join(", ")}. Check your .env file (see .env.example).`
+  );
+  process.exit(1);
+}
 
 const UPLOAD_DIR = "uploads";
 const DOWNLOAD_DIR = "downloads";
@@ -64,6 +80,18 @@ function normalizeKey(key) {
 function cleanAmount(value) {
   if (!value) return 0;
   return parseFloat(value.toString().replace(/[^0-9.]/g, "")) || 0;
+}
+
+// Accepts Yes/No, true/false, 1/0, y/n (case-insensitive). Returns undefined if the
+// column is blank/missing so we don't touch conversion status when it wasn't provided.
+function parseConverted(value) {
+  if (value === undefined || value === null || value.toString().trim() === "") {
+    return undefined;
+  }
+  const normalized = value.toString().trim().toLowerCase();
+  if (["yes", "y", "true", "1"].includes(normalized)) return true;
+  if (["no", "n", "false", "0"].includes(normalized)) return false;
+  return undefined;
 }
 
 // ==================== RINGBA FUNCTIONS ====================
@@ -209,22 +237,33 @@ async function callgridGetCallId(phoneNumber, startDate, endDate) {
   }
 }
 
-async function callgridUpdatePayout(callId, revenue, payout) {
+async function callgridUpdatePayout(callId, revenue, payout, converted) {
   try {
-    const updateBody = {
-      [callId]: {
-        Revenue: revenue,
-        Payout: payout
-      }
+    const callFields = {
+      Revenue: revenue,
+      Payout: payout
     };
+
+    // Converted is optional - only send it when the report actually specifies it,
+    // and send both a boolean and a Yes/No string since CallGrid's accepted
+    // format for this field isn't documented.
+    if (converted !== undefined) {
+      callFields.Converted = converted;
+      callFields.ConvertedStatus = converted ? "Yes" : "No";
+    }
+
+    const updateBody = { [callId]: callFields };
 
     const response = await axios.patch(
       `${CALLGRID_API_BASE}/call?organizationId=${CALLGRID_ORG_ID}`,
       updateBody,
       { headers: { Authorization: `Bearer ${CALLGRID_AUTH_TOKEN}`}, timeout: 30000 }
     );
-    
-    console.log(`[CallGrid] Payout updated: ${callId} - Revenue: $${revenue}, Payout: $${payout}`);
+
+    console.log(
+      `[CallGrid] Payout updated: ${callId} - Revenue: $${revenue}, Payout: $${payout}` +
+      (converted !== undefined ? `, Converted: ${converted}` : "")
+    );
     return { success: true, response: response.data };
   } catch (error) {
     console.error(`[CallGrid Update Error] ${callId}:`, error.response?.data || error.message);
@@ -286,6 +325,7 @@ async function processFile(system, filePath, reportStart, reportEnd, processType
       const revenue = cleanAmount(row.revenue);
       const payout = cleanAmount(row.payout);
       const targetName = system === "ringba" ? row.targetname : null;
+      const converted = system === "callgrid" ? parseConverted(row.converted) : undefined;
 
       // ✅ FAST validation (no Object.keys)
       if (!phoneNumber || revenue === null || payout === null) {
@@ -376,7 +416,8 @@ async function processFile(system, filePath, reportStart, reportEnd, processType
             const updateResult = await callgridUpdatePayout(
               result.callId,
               revenue,
-              payout
+              payout,
+              converted
             );
 
             if (updateResult.success) {
@@ -384,6 +425,7 @@ async function processFile(system, filePath, reportStart, reportEnd, processType
                 rowIndex,
                 phoneNumber,
                 callId: result.callId,
+                converted: converted === undefined ? null : converted,
                 status: "Processed",
               });
             } else {
