@@ -375,7 +375,11 @@ async function callgridGetCallId(phoneNumber, targetName, startDate, endDate) {
 
 
       console.log(
-        `[CallGrid] Phone matched but NO destinationName match.\n  Wanted: ${targetName}\n\n  Available:\n  ${[
+        `[CallGrid] Phone matched but NO destinationName match.
+  Wanted: ${targetName}
+
+  Available:
+  ${[
           ...new Set(
             phoneMatches.map(
               r =>
@@ -436,9 +440,13 @@ async function callgridGetCallId(phoneNumber, targetName, startDate, endDate) {
     }
 
     console.log(
-      `[CallGrid] Selected:\n  ID: ${bestMatch.id}\n  Phone: ${searchPhone}\n  Destination: ${bestMatch.destinationName ||
+      `[CallGrid] Selected:
+  ID: ${bestMatch.id}
+  Phone: ${searchPhone}
+  Destination: ${bestMatch.destinationName ||
       bestMatch.DestinationName
-      }\n  Duration: ${getDuration(bestMatch)} sec`
+      }
+  Duration: ${getDuration(bestMatch)} sec`
     );
 
     return {
