@@ -225,7 +225,8 @@ const App = () => {
                       "Required columns: inboundphonenumber, targetname, revenue, payout"
                     ) : (
                       <>
-                        Required columns: inboundphonenumber, revenue, payout
+                        Required columns: inboundphonenumber, targetname,
+                        revenue, payout
                         <br />
                         Optional column: <strong>converted</strong> (Yes/No or
                         true/false) &mdash; updates the call's converted

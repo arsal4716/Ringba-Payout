@@ -41,18 +41,16 @@ const DOWNLOAD_DIR = "downloads";
 
 const upload = multer({ dest: UPLOAD_DIR });
 
-// Create directories if they don't exist
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR);
 if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR);
 
-// ==================== HELPER FUNCTIONS ====================
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function formatPhoneNumber(phoneNumber) {
   if (!phoneNumber) return null;
   const phoneStr = phoneNumber.toString();
   const digitsOnly = phoneStr.replace(/\D/g, "");
-  
+
   if (/[Xx]/.test(phoneStr)) {
     const match = digitsOnly.match(/^(\d{6})/);
     return match ? `+1${match[1]}` : null;
@@ -66,13 +64,38 @@ function formatPhoneNumber(phoneNumber) {
 
 function formatCallGridPhoneNumber(phoneNumber) {
   if (!phoneNumber) return null;
-  const digitsOnly = phoneNumber.toString().replace(/\D/g, "");
-  if (digitsOnly.length === 10) return digitsOnly;
-  if (digitsOnly.length === 11 && digitsOnly.startsWith("1")) return digitsOnly.substring(1);
-  if (digitsOnly.length === 6) return digitsOnly;
+
+  const original = phoneNumber.toString().trim();
+
+  // masked number
+  if (/[Xx]/.test(original)) {
+    const digits = original.replace(/\D/g, "");
+
+    if (digits.length >= 6) {
+      return digits.substring(0, 6);
+    }
+
+    return null;
+  }
+
+  let digitsOnly = original.replace(/\D/g, "");
+
+  // already 11 digit with country code
+  if (
+    digitsOnly.length === 11 &&
+    digitsOnly.startsWith("1")
+  ) {
+    return digitsOnly;
+  }
+
+  // normal 10 digit
+  if (digitsOnly.length === 10) {
+    return digitsOnly;
+  }
+
+  // fallback
   return digitsOnly;
 }
-
 function normalizeKey(key) {
   return key.toString().trim().toLowerCase().replace(/\s+/g, "");
 }
@@ -117,7 +140,7 @@ async function ringbaGetInboundCallIds(phoneNumber, targetName, reportStart, rep
         }],
       },
     ];
-    
+
     if (checkHasPayout) {
       filters.push({
         anyConditionToMatch: [{
@@ -182,66 +205,279 @@ async function ringbaPostPaymentDetails(inboundCallId, revenue, payout) {
 }
 
 // ==================== CALLGRID FUNCTIONS ====================
-async function callgridGetCallId(phoneNumber, startDate, endDate) {
+async function callgridGetCallId(phoneNumber, targetName, startDate, endDate) {
   try {
-    const cleanPhone = formatCallGridPhoneNumber(phoneNumber);
-    console.log(`[CallGrid] Fetch: ${cleanPhone}, Date: ${startDate}`);
+
+    const searchPhone = formatCallGridPhoneNumber(phoneNumber);
+
+    console.log(
+      `[CallGrid] Fetch: ${searchPhone}, Destination: ${targetName}`
+    );
+
 
     const requestBody = {
-      startDate: startDate,
-      endDate: endDate,
+      startDate,
+      endDate,
+
       filters: {
-        items: [{
-          operator: "OR",
-          rules: [{
-            tagName: "CallerId",
-            values: [cleanPhone],
-            condition: "equals",
-            customOptions: [],
-            labelMap: { [cleanPhone]: "" }
-          }]
-        }]
+        items: [
+          {
+            operator: "OR",
+            rules: [
+              {
+                tagName: "CallerId",
+                values: [searchPhone],
+                condition: "contains",
+                customOptions: [],
+                labelMap: {
+                  [searchPhone]: ""
+                }
+              }
+            ]
+          }
+        ]
       },
+
       permission: "",
       page: 0,
-      maxItems: 100,
+      maxItems: 500,
+
       sortColumn: "createdAt",
       sortDirection: "desc",
+
       reportTimeZone: "US/Eastern",
       outcomes: [],
       isSortFieldTag: false,
       useCursor: false
     };
 
+
     const response = await axios.post(
       `${CALLGRID_API_BASE}/call?organizationId=${CALLGRID_ORG_ID}`,
       requestBody,
-      { headers: { Authorization: `Bearer ${CALLGRID_AUTH_TOKEN}` }, timeout: 30000 }
+      {
+        headers: {
+          Authorization: `Bearer ${CALLGRID_AUTH_TOKEN}`
+        },
+        timeout: 30000
+      }
     );
 
-    const records = response.data?.data || [];
 
-    if (records.length === 0) {
-      console.log(`[CallGrid] No records found for ${cleanPhone}`);
-      return { success: true, callId: null, noRecords: true };
+    let records = response.data?.data || [];
+
+
+    if (!records.length) {
+
+      console.log(
+        `[CallGrid] No records found`
+      );
+
+      return {
+        success: true,
+        callId: null,
+        noRecords: true
+      };
+
     }
 
-    // Return the most recent call (already sorted by createdAt desc)
-    const bestMatch = records[0];
-    console.log(`[CallGrid] Found call ID: ${bestMatch.id} for ${cleanPhone}`);
-    
-    return { success: true, callId: bestMatch.id, callData: bestMatch };
+
+
+    // ===========================
+    // PHONE MATCH USING BEGINS WITH
+    // ===========================
+
+    const phoneMatches = records.filter((r) => {
+
+
+      const callerId = (
+        r.callerId ||
+        r.CallerId ||
+        r.phoneNumber ||
+        r.inboundPhoneNumber ||
+        ""
+      )
+        .toString()
+        .replace(/\D/g, "");
+
+
+      return callerId.startsWith(searchPhone);
+
+    });
+
+
+
+    if (!phoneMatches.length) {
+
+      console.log(
+        `[CallGrid] Phone not matched: ${searchPhone}`
+      );
+
+
+      return {
+        success: true,
+        callId: null,
+        noRecords: true
+      };
+
+    }
+
+
+
+    console.log(
+      `[CallGrid] Phone matched ${phoneMatches.length} records`
+    );
+
+
+
+    // ===========================
+    // DESTINATION NAME MATCH
+    // ===========================
+
+    const normalize = (value) => {
+
+      return (value || "")
+        .toString()
+        .trim()
+        .toLowerCase()
+        .replace(/[\s\-_]/g, "");
+
+    };
+
+
+    const wantedDestination =
+      normalize(targetName);
+
+
+
+    const destinationMatches =
+      phoneMatches.filter((r) => {
+
+
+        const destination =
+          normalize(
+            r.destinationName ||
+            r.DestinationName
+          );
+
+
+        return (
+          destination === wantedDestination ||
+          destination.includes(wantedDestination) ||
+          wantedDestination.includes(destination)
+        );
+
+      });
+
+
+
+    if (!destinationMatches.length) {
+
+
+      console.log(
+        `[CallGrid] Phone matched but NO destinationName match.
+  Wanted: ${targetName}
+
+  Available:
+  ${[
+          ...new Set(
+            phoneMatches.map(
+              r =>
+                r.destinationName ||
+                r.DestinationName
+            )
+          )
+        ].join(" | ")
+        }`
+      );
+
+
+      return {
+        success: true,
+        callId: null,
+        noRecords: true,
+        destinationMismatch: true
+      };
+
+    }
+
+
+
+
+    // ===========================
+    // PICK LONGEST CALL
+    // ===========================
+
+    const getDuration = (rec) => {
+
+      return Number(
+        rec.duration ??
+        rec.callDuration ??
+        rec.talkTime ??
+        rec.connectedCallLengthInSeconds ??
+        rec.length ??
+        0
+      ) || 0;
+
+    };
+
+
+
+    let bestMatch = destinationMatches[0];
+
+
+    for (const rec of destinationMatches) {
+
+      if (
+        getDuration(rec) >
+        getDuration(bestMatch)
+      ) {
+
+        bestMatch = rec;
+
+      }
+
+    }
+
+    console.log(
+      `[CallGrid] Selected:
+  ID: ${bestMatch.id}
+  Phone: ${searchPhone}
+  Destination: ${bestMatch.destinationName ||
+      bestMatch.DestinationName
+      }
+  Duration: ${getDuration(bestMatch)} sec`
+    );
+
+    return {
+      success: true,
+      callId: bestMatch.id,
+      callData: bestMatch,
+      recordCount: destinationMatches.length
+
+    };
   } catch (error) {
-    console.error(`[CallGrid Error] ${phoneNumber}:`, error.response?.data || error.message);
-    return { success: false, message: error.response?.data?.message || error.message };
+    console.error(
+      `[CallGrid Error]`,
+      error.response?.data ||
+      error.message
+    );
+    return {
+      success: false,
+      message:
+        error.response?.data?.message ||
+        error.message
+    };
+
   }
 }
 
 async function callgridUpdatePayout(callId, revenue, payout, converted) {
   try {
+
     const callFields = {
-      Revenue: revenue,
-      Payout: payout
+      Revenue: Number(revenue),
+      Payout: Number(payout)
     };
 
     // Converted is optional - only send it when the report actually specifies it,
@@ -252,25 +488,53 @@ async function callgridUpdatePayout(callId, revenue, payout, converted) {
       callFields.ConvertedStatus = converted ? "Yes" : "No";
     }
 
-    const updateBody = { [callId]: callFields };
+    const updateBody = {
+      [callId]: callFields
+    };
+
+    console.log(
+      "[CallGrid Update Body]",
+      JSON.stringify(updateBody)
+    );
 
     const response = await axios.patch(
       `${CALLGRID_API_BASE}/call?organizationId=${CALLGRID_ORG_ID}`,
       updateBody,
-      { headers: { Authorization: `Bearer ${CALLGRID_AUTH_TOKEN}`}, timeout: 30000 }
+      {
+        headers: {
+          Authorization: `Bearer ${CALLGRID_AUTH_TOKEN}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 30000
+      }
     );
 
     console.log(
-      `[CallGrid] Payout updated: ${callId} - Revenue: $${revenue}, Payout: $${payout}` +
+      `[CallGrid] Payout updated: ${callId}` +
       (converted !== undefined ? `, Converted: ${converted}` : "")
     );
-    return { success: true, response: response.data };
+
+    return {
+      success: true,
+      response: response.data
+    };
+
   } catch (error) {
-    console.error(`[CallGrid Update Error] ${callId}:`, error.response?.data || error.message);
-    return { success: false, message: error.response?.data?.message || error.message };
+
+    console.error(
+      `[CallGrid Update Error] ${callId}:`,
+      JSON.stringify(error.response?.data, null, 2) ||
+      error.message
+    );
+
+    return {
+      success: false,
+      message:
+        error.response?.data?.message ||
+        error.message
+    };
   }
 }
-
 // ==================== PROCESSING FUNCTION ====================
 async function processFile(system, filePath, reportStart, reportEnd, processType) {
   const workbook = XLSX.readFile(filePath);
@@ -298,11 +562,10 @@ async function processFile(system, filePath, reportStart, reportEnd, processType
   const processedRecords = [];
   const failedRecords = [];
 
-  // ✅ FIXED: system-based required fields
   const requiredColumns =
     system === "ringba"
       ? ["inboundphonenumber", "targetname", "revenue", "payout"]
-      : ["inboundphonenumber", "revenue", "payout"];
+      : ["inboundphonenumber", "targetname", "revenue", "payout"];
 
   const startDate = reportStart.split("T")[0];
   const endDate = reportEnd.split("T")[0];
@@ -324,10 +587,8 @@ async function processFile(system, filePath, reportStart, reportEnd, processType
       const phoneNumber = formatPhoneNumber(row.inboundphonenumber);
       const revenue = cleanAmount(row.revenue);
       const payout = cleanAmount(row.payout);
-      const targetName = system === "ringba" ? row.targetname : null;
+      const targetName = row.targetname;
       const converted = system === "callgrid" ? parseConverted(row.converted) : undefined;
-
-      // ✅ FAST validation (no Object.keys)
       if (!phoneNumber || revenue === null || payout === null) {
         invalidRows.push({
           rowIndex,
@@ -337,12 +598,8 @@ async function processFile(system, filePath, reportStart, reportEnd, processType
         continue;
       }
 
-      if (system === "ringba" && !targetName) {
-        invalidRows.push({
-          rowIndex,
-          row,
-          error: "Missing targetName for Ringba",
-        });
+      if (!targetName) {
+        invalidRows.push({ rowIndex, row, error: "Missing targetName" });
         continue;
       }
 
@@ -408,6 +665,7 @@ async function processFile(system, filePath, reportStart, reportEnd, processType
         else {
           result = await callgridGetCallId(
             phoneNumber,
+            targetName,
             startDate,
             endDate
           );
@@ -490,13 +748,13 @@ app.post("/upload", upload.single("file"), async (req, res) => {
   try {
     console.log(`\n========== Processing with ${system.toUpperCase()} ==========`);
     console.log(`Start: ${reportStart}, End: ${reportEnd}, Type: ${processType}`);
-    
+
     const summary = await processFile(system, filePath, reportStart, reportEnd, processType);
-    
+
     fs.unlinkSync(filePath);
-    
-    const processTypeLabel = processType === "withPayout" 
-      ? "Processed with hasPayout check (only positive payout)" 
+
+    const processTypeLabel = processType === "withPayout"
+      ? "Processed with hasPayout check (only positive payout)"
       : "Processed all records";
 
     return res.json({
