@@ -221,7 +221,17 @@ const App = () => {
                     className="py-2"
                   />
                   <Form.Text className="text-muted">
-                    Required columns: inboundphonenumber, targetname, revenue, payout
+                    {activeSystem === "ringba" ? (
+                      "Required columns: inboundphonenumber, targetname, revenue, payout"
+                    ) : (
+                      <>
+                        Required columns: inboundphonenumber, revenue, payout
+                        <br />
+                        Optional column: <strong>converted</strong> (Yes/No or
+                        true/false) &mdash; updates the call's converted
+                        status in CallGrid
+                      </>
+                    )}
                   </Form.Text>
                 </Form.Group>
 
