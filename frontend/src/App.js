@@ -122,7 +122,7 @@ const App = () => {
                 <i className="bi bi-currency-dollar"></i>
                 Payout CRM - {getSystemName()}
               </h3>
-              <small>Version: 2.0 | Updated: May-26-2026</small>
+              <small>Version: 2.1 | Updated: July-29-2026</small>
             </Card.Header>
 
             <Card.Body className="p-4">
@@ -221,6 +221,14 @@ const App = () => {
                   />
                   <Form.Text className="text-muted">
                     Required columns: inboundphonenumber, targetname, revenue, payout
+                    {activeSystem === "callgrid" && (
+                      <>
+                        <br />
+                        Optional column: <strong>converted</strong> (Yes/No or
+                        true/false) &mdash; updates the call's converted
+                        status in CallGrid
+                      </>
+                    )}
                   </Form.Text>
                 </Form.Group>
 
@@ -299,6 +307,16 @@ const App = () => {
                           <Badge bg="danger" pill className="px-3 py-2">
                             Failed: {result.summary.failed}
                           </Badge>
+                          {result.summary.convertedYes > 0 && (
+                            <Badge bg="success" pill className="px-3 py-2">
+                              Converted: {result.summary.convertedYes}
+                            </Badge>
+                          )}
+                          {result.summary.convertedNo > 0 && (
+                            <Badge bg="secondary" pill className="px-3 py-2">
+                              Not Converted: {result.summary.convertedNo}
+                            </Badge>
+                          )}
                           <Badge bg="info" pill className="px-3 py-2">
                             Batches: {result.summary.batches}
                           </Badge>
