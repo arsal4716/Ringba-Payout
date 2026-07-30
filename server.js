@@ -480,12 +480,11 @@ async function callgridUpdatePayout(callId, revenue, payout, converted) {
       Payout: Number(payout)
     };
 
-    // Converted is optional - only send it when the report actually specifies it,
-    // and send both a boolean and a Yes/No string since CallGrid's accepted
-    // format for this field isn't documented.
+    // Converted is optional - only send it when the report actually specifies it.
+    // CallGrid rejects the whole update if any unrecognized field is included,
+    // so only the boolean "Converted" field is sent (confirmed working).
     if (converted !== undefined) {
       callFields.Converted = converted;
-      callFields.ConvertedStatus = converted ? "Yes" : "No";
     }
 
     const updateBody = {
